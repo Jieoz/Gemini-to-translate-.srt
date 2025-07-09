@@ -7,64 +7,73 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from typing import List, AsyncGenerator, Dict
 import re
 import asyncio
-import time
 
 load_dotenv()
 
-# --- 核心优化参数 ---
-# 根据您的要求，将批次大小调回16，以实现最佳的API调用经济性。
-INITIAL_BATCH_SIZE = 16
-
-# 创建 FastAPI 应用实例
+# --- FastAPI App Initialization ---
 app = FastAPI()
 
-# 配置 Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.0-flash')
+# --- Core Optimization Parameter ---
+# Number of sentence groups to batch into a single API call.
+# This is the key parameter for cost optimization.
+# A larger number means fewer API calls but a larger prompt for each call.
+# 15 is a balanced starting point.
+GROUP_BATCH_SIZE = 20
 
-# 关闭安全过滤器
+# --- Gemini API Configuration ---
+try:
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    # Using a powerful model is important for complex instructions like this.
+    model = genai.GenerativeModel('gemini-2.0-flash')
+except Exception as e:
+    print(f"Error configuring Gemini API: {e}")
+    model = None
+
+# Safety settings to allow a wider range of content
 SAFETY_SETTINGS = {
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
+# --- New Prompt for Batching Multiple Groups (V10 - Cost Optimized) ---
+# This prompt instructs the model to handle multiple, independent sentence groups in one go.
+MULTI_GROUP_BATCH_PROMPT = """
+You are an expert subtitle translator. Your task is to translate a batch of distinct subtitle groups into fluent, natural Chinese.
 
-# --- 优化后的批处理 Prompt (V8 - Final) ---
-# 移除了合并指令，并用更强的语气禁止合并，强制进行独立翻译。
-BATCH_TRANSLATION_PROMPT = """
-You are a subtitle translation machine. Your task is to translate a batch of subtitles into Chinese with maximum fidelity.
+**CRITICAL INSTRUCTIONS - FOLLOW WITH 100% PRECISION:**
+1.  **INDEPENDENT GROUPS:** The input contains multiple, separate sentence groups. Each group is enclosed by `[GROUP START]` and `[GROUP END]`. You MUST treat each group as a completely independent translation task. DO NOT merge context or meaning between different groups.
+2.  **FOR EACH GROUP INDIVIDUALLY:**
+    a. **COMBINE:** Mentally combine the text from all `[index]` lines within that single group to understand the full sentence.
+    b. **TRANSLATE:** Translate the complete sentence into high-quality, natural-sounding Chinese.
+    c. **RE-SPLIT:** Intelligently distribute your single translated sentence back across the original `[index]` lines for that group. The number of output `[index]` lines for a group must EXACTLY match the number of input `[index]` lines for that same group.
+3.  **PRESERVE ALL INDEXES:** The `[index]` number is critical. Your output must contain every single `[index]` from the input, each on a new line.
+4.  **OUTPUT FORMAT:** Only output the `[index] <translation>` lines. Do not include group markers (`[GROUP START]`, `[GROUP END]`) or any other explanatory text in your response.
 
-**CRITICAL RULES - FOLLOW WITH 100% PRECISION:**
-1.  **ONE-TO-ONE TRANSLATION:** You MUST translate each `[index]` line from the input INDEPENDENTLY.
-2.  **NO MERGING:** Do NOT merge the meaning of multiple input lines into a single translation. Even if two lines are similar, they must be translated separately.
-3.  **PRESERVE INDEX:** For each input line `[index] text`, you MUST return a corresponding line `[index] <translation>`. The index number is critical.
-4.  **VERIFY COUNT:** The number of `[index]` lines in your output must EXACTLY match the number of `[index]` lines in the input.
-
-**Example of Correct Independent Translation:**
+**Example:**
 *Input:*
+[GROUP START]
 [95] who honed his wine making skills
 [96] in Australia and the US
+[GROUP END]
+[GROUP START]
+[97] It is a beautiful day.
+[GROUP END]
+
 *Your Correct Output:*
 [95] 他磨练了他的酿酒技巧
 [96] 在澳大利亚和美国
+[97] 今天天气真好。
 
-**Example of FORBIDDEN Merging:**
-*Input:*
-[95] who honed his wine making skills
-[96] in Australia and the US
-*Your INCORRECT Output:*
-[95] 他在澳大利亚和美国磨练了他的酿酒技巧
-[96] 他在澳大利亚和美国磨练了他的酿酒技巧
-
-Now, process the following batch, ensuring each line is translated independently:
-{subtitle_batch}
+Now, process the following batch of groups, ensuring each group is translated independently:
+{subtitle_batch_text}
 """
 
 
 def parse_srt(srt_content: str) -> List[Dict]:
-    """Parses an SRT file content and returns a list of subtitle dictionaries."""
+    """Parses SRT file content into a list of subtitle dictionaries."""
+    # This function remains robust for parsing standard SRT format.
     lines = srt_content.strip().split("\n")
     subtitles = []
     i = 0
@@ -74,17 +83,14 @@ def parse_srt(srt_content: str) -> List[Dict]:
                 index = int(lines[i].strip())
                 i += 1
                 time_str = lines[i]
+                if "-->" not in time_str: continue
                 i += 1
                 text_lines = []
                 while i < len(lines) and lines[i].strip() != "":
                     text_lines.append(lines[i])
                     i += 1
                 text = "\n".join(text_lines)
-                subtitles.append({
-                    "index": index,
-                    "time": time_str,
-                    "text": text
-                })
+                subtitles.append({"index": index, "time": time_str, "text": text})
                 i += 1
             else:
                 i += 1
@@ -93,13 +99,39 @@ def parse_srt(srt_content: str) -> List[Dict]:
             continue
     return subtitles
 
+def group_subtitles_by_sentence(subtitles: List[Dict]) -> List[List[Dict]]:
+    """
+    Groups subtitles that likely form a complete sentence. This is key for quality.
+    """
+    if not subtitles:
+        return []
+    groups = []
+    current_group = []
+    sentence_enders = ('.', '?', '!', '."')
+    for sub in subtitles:
+        cleaned_text = sub['text'].replace('\n', ' ').strip()
+        current_group.append(sub)
+        if cleaned_text.endswith(sentence_enders) or (cleaned_text.isupper() and cleaned_text):
+            groups.append(current_group)
+            current_group = []
+    if current_group:
+        groups.append(current_group)
+    return groups
+
+
 async def _api_call_with_retry(prompt: str) -> str:
     """A helper function to make API calls with exponential backoff."""
+    if not model:
+        return "API_CONFIGURATION_ERROR"
     retries = 3
     delay = 5
     for attempt in range(retries):
         try:
-            response = await model.generate_content_async(prompt, safety_settings=SAFETY_SETTINGS)
+            response = await model.generate_content_async(
+                prompt,
+                safety_settings=SAFETY_SETTINGS,
+                generation_config=genai.types.GenerationConfig(temperature=0.5)
+            )
             return response.text.strip()
         except Exception as e:
             if "429" in str(e) and attempt < retries - 1:
@@ -111,92 +143,118 @@ async def _api_call_with_retry(prompt: str) -> str:
                 return "API_CALL_FAILED"
     return "API_CALL_FAILED"
 
-
-async def translate_batch_and_parse(sub_batch: List[Dict]) -> Dict[int, str]:
+async def translate_batch_of_groups_and_parse(batch_of_groups: List[List[Dict]]) -> Dict[int, str]:
     """
-    Translates a batch and parses the result into a dictionary of {index: translation}.
+    Constructs a prompt for a batch of groups, makes a single API call,
+    and parses the entire response.
     """
     batch_input_text = ""
-    for sub in sub_batch:
-        cleaned_text = sub['text'].replace('\n', ' ').strip()
-        batch_input_text += f"[{sub['index']}] {cleaned_text}\n"
-    
-    prompt = BATCH_TRANSLATION_PROMPT.format(subtitle_batch=batch_input_text)
+    original_text_map = {}
+    # Combine multiple groups into one large text block for the prompt
+    for group in batch_of_groups:
+        batch_input_text += "[GROUP START]\n"
+        for sub in group:
+            cleaned_text = sub['text'].replace('\n', ' ').strip()
+            batch_input_text += f"[{sub['index']}] {cleaned_text}\n"
+            original_text_map[sub['index']] = cleaned_text
+        batch_input_text += "[GROUP END]\n"
+
+    prompt = MULTI_GROUP_BATCH_PROMPT.format(subtitle_batch_text=batch_input_text)
     response_text = await _api_call_with_retry(prompt)
 
-    if response_text == "API_CALL_FAILED":
-        return {}
+    # Fallback mechanism: if API fails, return original text for the whole batch
+    if response_text in ("API_CALL_FAILED", "API_CONFIGURATION_ERROR"):
+        return original_text_map
 
-    # 解析返回的结果，构建一个 {index: translation} 的字典
+    # Parse the entire response text for all groups in the batch
     translation_map = {}
-    # 正则表达式匹配 [数字] 后面的所有内容
     pattern = re.compile(r'\[(\d+)\]\s*(.*)')
     for line in response_text.split('\n'):
         match = pattern.match(line.strip())
         if match:
             index = int(match.group(1))
             translation = match.group(2).strip()
-            translation_map[index] = translation
-            
+            if translation:
+                translation_map[index] = translation
+
+    # Verification and fallback for any missed indexes within the batch
+    for group in batch_of_groups:
+        for sub in group:
+            if sub['index'] not in translation_map:
+                print(f"Warning: Index {sub['index']} not found in batch response. Using original text.")
+                translation_map[sub['index']] = original_text_map[sub['index']]
+
     return translation_map
 
 
 async def translate_srt_stream(srt_content: str, display_mode: str = "only_translated") -> AsyncGenerator[str, None]:
     """
-    使用自适应批处理和流式响应高效地翻译SRT文件。
+    The main translation orchestrator. Groups subtitles, batches the groups,
+    translates batch by batch, and streams the results.
     """
-    subtitles = parse_srt(srt_content)
+    original_subtitles = parse_srt(srt_content)
+    subtitle_groups = group_subtitles_by_sentence(original_subtitles)
     
-    for i in range(0, len(subtitles), INITIAL_BATCH_SIZE):
-        batch_subtitles = subtitles[i:i + INITIAL_BATCH_SIZE]
+    total_groups = len(subtitle_groups)
+    # Process the groups in batches of GROUP_BATCH_SIZE
+    for i in range(0, total_groups, GROUP_BATCH_SIZE):
+        batch_of_groups = subtitle_groups[i:i + GROUP_BATCH_SIZE]
         
-        status_message = f"[STATUS] 正在翻译批次 (字幕 {batch_subtitles[0]['index']} 到 {batch_subtitles[-1]['index']})... 请稍候。"
+        start_index = batch_of_groups[0][0]['index']
+        end_index = batch_of_groups[-1][-1]['index']
+        status_message = f"[STATUS] 正在翻译批次 (字幕 {start_index} 到 {end_index})..."
         yield status_message
 
-        # 获取包含索引的翻译字典
-        translation_map = await translate_batch_and_parse(batch_subtitles)
+        # Make one API call for the entire batch of groups
+        translation_map = await translate_batch_of_groups_and_parse(batch_of_groups)
 
-        output_srt_batch = ""
-        for sub in batch_subtitles:
-            # 从字典中按索引查找翻译，如果找不到，则使用原文作为后备
-            translated_text = translation_map.get(sub['index'], sub['text'].replace('\n', ' ').strip())
-            
-            if display_mode == "only_translated":
-                output_srt_batch += f"{sub['index']}\n{sub['time']}\n{translated_text}\n\n"
-            elif display_mode == "original_above_translated":
-                output_srt_batch += f"{sub['index']}\n{sub['time']}\n{sub['text']}\n{translated_text}\n\n"
-            elif display_mode == "translated_above_original":
-                output_srt_batch += f"{sub['index']}\n{sub['time']}\n{translated_text}\n{sub['text']}\n\n"
-        
-        yield output_srt_batch
+        # Yield the processed SRT for each group within the completed batch
+        for group in batch_of_groups:
+            output_srt_chunk = ""
+            for sub in group:
+                translated_text = translation_map.get(sub['index'], sub['text'].replace('\n', ' ').strip())
+                output_srt_chunk += f"{sub['index']}\n{sub['time']}\n"
+                if display_mode == "only_translated":
+                    output_srt_chunk += f"{translated_text}\n\n"
+                elif display_mode == "original_above_translated":
+                    output_srt_chunk += f"{sub['text']}\n{translated_text}\n\n"
+                elif display_mode == "translated_above_original":
+                    output_srt_chunk += f"{translated_text}\n{sub['text']}\n\n"
+            yield output_srt_chunk
+    
+    yield "[STATUS] 全部翻译完成！"
 
 
 @app.post("/translate", response_class=JSONResponse)
 async def translate_endpoint(file: UploadFile = File(...), display_mode: str = "only_translated"):
+    """Endpoint for a full, non-streamed translation. It waits for all chunks."""
     try:
         contents = await file.read()
-        srt_content = contents.decode("utf-8")
-        
+        srt_content = contents.decode("utf-8-sig")
         full_translation = ""
         async for chunk in translate_srt_stream(srt_content, display_mode):
             if not chunk.startswith("[STATUS]"):
                 full_translation += chunk
-            
         return JSONResponse(content={"translated_srt": full_translation})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
 @app.post("/translate-stream")
 async def translate_stream_endpoint(file: UploadFile = File(...), display_mode: str = "only_translated"):
+    """Endpoint for streaming the translation results back to the client in real-time."""
     try:
         contents = await file.read()
-        srt_content = contents.decode("utf-8")
+        srt_content = contents.decode("utf-8-sig")
         return StreamingResponse(translate_srt_stream(srt_content, display_mode), media_type="text/plain; charset=utf-8")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    if not os.getenv("GEMINI_API_KEY"):
+        print("FATAL ERROR: GEMINI_API_KEY environment variable not found.")
+        print("Please create a .env file and add your API key to it.")
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
