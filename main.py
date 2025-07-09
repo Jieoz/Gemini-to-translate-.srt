@@ -40,7 +40,7 @@ SAFETY_SETTINGS = {
 # --- New Prompt for Batching Multiple Groups (V10 - Cost Optimized) ---
 # This prompt instructs the model to handle multiple, independent sentence groups in one go.
 MULTI_GROUP_BATCH_PROMPT = """
-You are an expert subtitle translator. Your task is to translate a batch of distinct subtitle groups into fluent, natural Chinese.
+You are an expert subtitle translator. Your task is to translate a batch of distinct subtitle groups into fluent, natural Simplified Chinese.
 
 **CRITICAL INSTRUCTIONS - FOLLOW WITH 100% PRECISION:**
 1.  **INDEPENDENT GROUPS:** The input contains multiple, separate sentence groups. Each group is enclosed by `[GROUP START]` and `[GROUP END]`. You MUST treat each group as a completely independent translation task. DO NOT merge context or meaning between different groups.
