@@ -62,7 +62,7 @@
         ```
       * 然后，复制并运行下面的命令，来安装所有必需的Python库：
         ```bash
-        pip install fastapi uvicorn "google-generativeai>=0.4.0" python-dotenv python-multipart aiofiles pydantic pathlib2
+        pip install fastapi uvicorn "google-generativeai>=0.4.0" python-dotenv python-multipart pydantic streamlit requests aiohttp
         ```
       * 等待终端完成安装过程。
 
