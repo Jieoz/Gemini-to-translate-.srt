@@ -12,7 +12,7 @@
 * **🧠 上下文感知翻译**: 通过智能分组，将零散的字幕行组合成完整的句子再进行翻译，极大提升了翻译的连贯性和准确性。
 * **🚀 双模型支持**: 可在 `Gemini 1.5 Flash` (高速经济) 和 `Gemini 1.5 Pro` (高质量) 之间自由切换，平衡成本与效果。
 * **✂️ 智能长句断句**: 对于时长过长的字幕，可调用AI进行二次处理，根据语义和语音停顿智能地将其拆分为多个更易于阅读的短句，并自动重新计算时间轴。
-* ** bilingual 支持 **: 支持生成“仅译文”或多种格式的“中英/英中”双语字幕，满足不同场景（如语言学习、专业校对）的需求。
+* **⚡️ bilingual 支持**: 支持生成“仅译文”或多种格式的“中英/英中”双语字幕，满足不同场景（如语言学习、专业校对）的需求。
 * **⚡️ 实时流式界面**: 前端采用 Streamlit 构建，后端使用 FastAPI 流式响应。用户可以实时看到翻译进度和状态更新，无需长时间等待。
 * **📦 批量处理**: 支持一次性上传和翻译多个 SRT 文件，并提供打包下载功能。
 * **🎨 高度可配置**: 从翻译质量、显示格式到智能断句的触发条件，几乎所有关键参数都可以在UI界面上进行调整。
@@ -49,10 +49,12 @@
 
 ### 2. 克隆项目
 
+
 ```bash
-git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
-cd your-repo-name
+git clone https://github.com/Jieoz/Gemini-to-translate-.srt-.git
+cd Gemini-to-translate-.srt-
 ```
+
 
 ### 3. 安装依赖
 
