@@ -58,7 +58,7 @@ cd Gemini-to-translate-.srt-
 
 ### 3. 安装依赖
 
-在项目根目录下打开终端，运行下面这**一行代码**来安装所有必需的Python库，无需创建新文件：
+在项目根目录下打开终端，运行下面这**一行代码**来安装所有必需的Python库：
 
 ```bash
 pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai
@@ -74,27 +74,13 @@ pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-
     GEMINI_API_KEY="在这里填入您的API密钥"
     ```
 
-### 5. 启动后端服务
+### 5.启动服务 (运行程序)
 
-在终端中运行以下命令来启动FastAPI后端服务器：
-
-```bash
-uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-您应该会看到类似 `Application startup complete.` 的输出，表示后端已成功运行在 `http://127.0.0.1:8000`。
-
-### 6. 启动前端界面
-
-**新开一个终端窗口**，进入项目根目录，然后运行以下命令来启动Streamlit前端应用：
-
-```bash
-streamlit run streamlit_app.py
-```
+这个工具分为后端和前端，需要`run.cmd`来分别运行它们。
 
 您的浏览器会自动打开一个新的标签页，地址通常是 `http://localhost:8501`。
 
-### 7. 开始使用
+### 6. 开始使用
 
 现在，您可以通过浏览器界面上传SRT文件，调整设置，然后开始翻译了！
 
