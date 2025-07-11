@@ -1,106 +1,152 @@
-项目借鉴https://linux.do/t/topic/353949
+# 🔮 SRT 深度翻译器 Pro
 
------
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![Frameworks](https://img.shields.io/badge/Frameworks-FastAPI%20%7C%20Streamlit-green)](https://fastapi.tiangolo.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-### **第零步：准备工作 (检查您的电脑)**
+一个由 Google Gemini 模型驱动的、专业级的 SRT 字幕文件批量翻译工具。它不仅提供高质量的翻译，还包含了智能断句、双语支持和实时流式处理等高级功能，旨在为用户提供一站式的字幕本地化解决方案。
 
-在开始之前，您需要确保您的电脑上安装了 **Python**。这个工具是基于Python的。
+## ✨ 核心功能
 
-1.  **打开终端**:
+* **🧠 上下文感知翻译**: 通过智能分组，将零散的字幕行组合成完整的句子再进行翻译，极大提升了翻译的连贯性和准确性。
+* **🚀 双模型支持**: 可在 `Gemini 1.5 Flash` (高速经济) 和 `Gemini 1.5 Pro` (高质量) 之间自由切换，平衡成本与效果。
+* **✂️ 智能长句断句**: 对于时长过长的字幕，可调用AI进行二次处理，根据语义和语音停顿智能地将其拆分为多个更易于阅读的短句，并自动重新计算时间轴。
+* ** bilingual 支持**: 支持生成“仅译文”或多种格式的“中英/英中”双语字幕，满足不同场景（如语言学习、专业校对）的需求。
+* **⚡️ 实时流式界面**: 前端采用 Streamlit 构建，后端使用 FastAPI 流式响应。用户可以实时看到翻译进度和状态更新，无需长时间等待。
+* **📦 批量处理**: 支持一次性上传和翻译多个 SRT 文件，并提供打包下载功能。
+* **🎨 高度可配置**: 从翻译质量、显示格式到智能断句的触发条件，几乎所有关键参数都可以在UI界面上进行调整。
+* **🔒 隐私安全**: 所有翻译处理均通过您自己的API密钥在后端完成，字幕文件内容不会被第三方服务存储。
 
-      * 在 Windows 上，您可以搜索 "命令提示符" 或 "PowerShell" 并打开它。
-      * 在 macOS 或 Linux 上，打开 "终端" (Terminal) 应用。
+## 🛠️ 技术栈
 
-2.  **检查 Python 版本**:
-    在终端里输入下面的命令，然后按回车：
+* **后端**: Python 3.9+, FastAPI, Uvicorn
+* **前端**: Streamlit
+* **AI核心**: Google Generative AI (Gemini)
+* **依赖管理**: pip
 
-    ```bash
-    python --version
+## 🏗️ 项目架构
+
+本工具采用前后端分离的经典架构：
+
+1.  **前端 (Streamlit)**: 作为用户交互界面，负责文件上传、参数配置、向后端发起请求，并以流式方式接收和展示结果。
+2.  **后端 (FastAPI)**: 作为核心处理引擎，负责接收文件、解析SRT、调用Google Gemini API进行翻译和智能处理，并通过流式HTTP响应将结果返回给前端。
+3.  **Google AI**: 实际执行翻译和自然语言处理任务的云服务。
+
+```
+[用户浏览器] <--> [Streamlit 前端服务] <--> [FastAPI 后端API] <--> [Google Gemini API]
+```
+
+## 🚀 快速开始
+
+请按照以下步骤在您的本地计算机上部署和运行此工具。
+
+### 1. 先决条件
+
+* 已安装 [Python 3.9](https://www.python.org/downloads/) 或更高版本。
+* 已安装 `pip` 包管理器。
+* 拥有一个有效的 [Google AI Studio API Key](https://aistudio.google.com/app/apikey)。
+
+### 2. 克隆项目
+
+```bash
+git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+cd your-repo-name
+```
+
+### 3. 安装依赖
+
+在项目根目录下打开终端，运行下面这**一行代码**来安装所有必需的Python库，无需创建新文件：
+
+```bash
+pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai
+```
+*(提示: 我们将 `uvicorn[standard]` 加上引号，以确保在所有类型的终端中都能正确安装。)*
+
+### 4. 配置API密钥
+
+1.  在项目根目录下，创建一个名为 `.env` 的文件。
+2.  在该文件中添加您的Google Gemini API密钥，格式如下：
+
+    ```
+    GEMINI_API_KEY="在这里填入您的API密钥"
     ```
 
-    或者
+### 5. 启动后端服务
 
-    ```bash
-    python3 --version
-    ```
+在终端中运行以下命令来启动FastAPI后端服务器：
 
-    如果您看到了类似 `Python 3.x.x` 的版本号（例如 `Python 3.9.7`），说明您已经安装好了，可以进行下一步。如果没有，请先从Python官方网站 `python.org` 下载并安装最新版的Python。安装时请务必勾选 "Add Python to PATH" 的选项。
+```bash
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
 
------
+您应该会看到类似 `Application startup complete.` 的输出，表示后端已成功运行在 `http://127.0.0.1:8000`。
 
-### **第一步：项目设置 (创建文件夹)**
+### 6. 启动前端界面
 
-为了保持文件整洁，我们先为这个翻译工具创建一个专门的文件夹。
+**新开一个终端窗口**，进入项目根目录，然后运行以下命令来启动Streamlit前端应用：
 
-1.  选择一个您喜欢的位置（比如桌面或文档文件夹）。
-2.  创建一个新的文件夹，并给它命名，例如 `SRT_Translator`。
-3.  接下来的所有操作和文件都将保存在这个 `SRT_Translator` 文件夹里。
+```bash
+streamlit run streamlit_app.py
+```
 
------
+您的浏览器会自动打开一个新的标签页，地址通常是 `http://localhost:8501`。
 
-4.  **获取 Gemini API 密钥**:
+### 7. 开始使用
 
-      * 这个工具使用 Google 的 Gemini 模型进行翻译，所以需要一个API密钥。
-      * 访问 [Google AI Studio](https://aistudio.google.com/)。
-      * 使用您的 Google 账号登录。
-      * 登录后，点击页面上的 “**Get API key**”（获取API密钥）按钮。
-      * 在弹出的窗口中，选择 “**Create API key in new project**”（在新项目中创建API密钥）。
-      * 复制生成的这一长串字符。这就是您的API密钥，请妥善保管，不要泄露给他人。
+现在，您可以通过浏览器界面上传SRT文件，调整设置，然后开始翻译了！
 
------
+## ⚙️ 详细配置
 
-### **第二步：配置环境 (安装依赖和设置密钥)**
+### 后端配置 (`main.py`)
 
-现在，我们要安装这个工具运行所需要的库，并把刚才获取的密钥配置好。
+您可以直接在 `main.py` 文件中修改一些核心参数的默认值：
 
-1.  **安装依赖库**:
+* **API相关**: `MAX_CHARS_PER_BATCH`, `MAX_RETRIES`, `RATE_LIMIT_DELAY`, `API_TIMEOUT_SECONDS` 等。
+* **功能默认值**: 在 `@app.get("/config")` 路由下，您可以修改所有提供给前端的默认配置，例如：
+    * 默认的目标语言 (`default_target_language`)
+    * 智能断句的默认参数 (`sentence_break_features`)
 
-      * 回到您之前打开的终端。
-      * 首先，使用 `cd` 命令进入到我们创建的文件夹。例如，如果您的文件夹在桌面上，可以输入 (请根据您的实际路径修改):
-        ```bash
-        cd Desktop/SRT_Translator
-        ```
-      * 然后，复制并运行下面的命令，来安装所有必需的Python库：
-        ```bash
-        pip install fastapi uvicorn "google-generativeai>=0.4.0" python-dotenv python-multipart pydantic streamlit requests aiohttp
-        ```
-      * 等待终端完成安装过程。
+### 前端配置 (`streamlit_app.py`)
 
-2.  **配置API密钥**:
+在前端页面的侧边栏，用户可以动态配置后端的API地址和请求超时时间，这在将前后端部署在不同机器上时非常有用。
 
-      * 在 `SRT_Translator` 文件夹中，创建一个新的文本文件。
-      * **非常重要**：将这个文件命名为 `.env` (前面有一个点，没有其他名字)。
-      * 用记事本或任何代码编辑器打开这个 `.env` 文件，输入以下内容：
-        ```
-        GEMINI_API_KEY=这里粘贴您刚刚从Google获取的API密钥
-        ```
-      * 将 `这里粘贴您刚刚从Google获取的API密钥` 替换成您自己的密钥字符串，然后保存文件。
+## 📚 API接口文档
+
+本项目的后端基于FastAPI构建，因此它**自动生成了交互式的API文档**。当后端服务运行时，您可以通过访问以下地址来查看和测试API：
+
+* **Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+* **ReDoc**: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+
+这对于二次开发或将此翻译功能集成到其他应用中非常方便。
+
+## 展望与贡献
+
+我们欢迎任何形式的贡献来让这个项目变得更好！
+
+### 未来路线图
+
+* [ ] **缓存机制**: 为已翻译的句子添加缓存，减少重复API调用，降低成本。
+* [ ] **术语表 (Glossary)**: 允许用户上传自定义术语表，确保专业词汇翻译的准确性和一致性。
+* [ ] **二次精校流程**: 增加一个“审校”模式，在初翻后再次调用AI对全文进行润色。
+* [ ] **Docker化部署**: 提供 `Dockerfile`，实现一键容器化部署。
+
+### 如何贡献
+
+1.  Fork 本仓库。
+2.  创建一个新的分支 (`git checkout -b feature/YourAmazingFeature`)。
+3.  提交您的代码 (`git commit -m 'Add some AmazingFeature'`)。
+4.  将您的分支推送到GitHub (`git push origin feature/YourAmazingFeature`)。
+5.  创建一个新的 Pull Request。
+
+## 📄 许可证
+
+本项目采用 [MIT License](LICENSE) 开源许可证。
 
 
------
+## 项目借鉴
 
-### **第三步：启动服务 (运行程序)**
+[使用 Gemini 来翻译 .srt 字幕文件]https://linux.do/t/topic/353949
 
-这个工具分为后端和前端，需要`run.cmd`来分别运行它们。
-
------
-
-### **第四步：使用翻译工具**
-
-现在，您的浏览器中应该已经显示了翻译工具的界面。
-
-1.  **上传文件**: 点击界面上的 “**Upload an .srt file**” 按钮，选择您要翻译的SRT字幕文件。
-2.  **选择模式**:
-      * **翻译模式 (Translate Mode)**:
-          * `Stream`: 流式模式，会一个一个地返回翻译结果，感觉上更快。
-          * `Unary`: 一次性返回所有结果。
-      * **显示格式 (Display Mode)**:
-          * `Translated Only`: 只显示翻译后的文字。
-          * `Original Top, Translated Bottom`: 上方显示原文，下方显示译文。
-          * `Translated Top, Original Bottom`: 上方显示译文，下方显示原文。
-3.  **开始翻译**: 点击 “**开始翻译 (Start Translation)**” 按钮。
-4.  **查看结果**: 等待片刻，翻译完成的字幕内容就会出现在下方的文本框中。您可以直接从文本框中复制翻译好的内容。
-
------
-
-enjoy
+---
+*该文档最后更新于 2025年7月11日。*
