@@ -51,8 +51,8 @@
 
 
 ```bash
-git clone https://github.com/Jieoz/Gemini-to-translate-.srt-.git
-cd Gemini-to-translate-.srt-
+git clone https://github.com/Jieoz/Gemini-to-translate-.srt.git
+cd Gemini-to-translate-.srt
 ```
 
 
