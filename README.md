@@ -148,7 +148,8 @@ streamlit run streamlit_app.py
 
 ## 项目借鉴
 
-[使用 Gemini 来翻译 .srt 字幕文件]https://linux.do/t/topic/353949
+
+ [使用 Gemini 来翻译 .srt 字幕文件](https://linux.do/t/topic/353949)
 
 ---
 *该文档最后更新于 2025年7月11日。*
