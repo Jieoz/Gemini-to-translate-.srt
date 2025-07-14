@@ -61,7 +61,7 @@ cd Gemini-to-translate-.srt
 在项目根目录下打开终端，运行下面这**一行代码**来安装所有必需的Python库：
 
 ```bash
-pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai watchfiles
+pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai watchfiles python-multipart
 ```
 *(提示: 我们将 `uvicorn[standard]` 加上引号，以确保在所有类型的终端中都能正确安装。)*
 
