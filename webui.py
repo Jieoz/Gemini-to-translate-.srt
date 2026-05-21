@@ -45,16 +45,21 @@ def init_session_state():
 def calculate_cost_estimate(
     files_content: List[str], 
     model_name: str, 
-    enable_sentence_break: bool
+    enable_sentence_break: bool,
+    provider: str = "gemini"
 ) -> str:
     """
     根据文件内容、所选模型和是否启用智能断句来估算费用。
     """
+    if provider != "gemini":
+        return "第三方 API 价格因服务商而异，请按您的提供商计费规则估算"
+
     # --- 基础定价 (美元 / 每100万 aTokens) ---
     # 假设Pro模型价格是Flash的10倍，这是一个常见的定价策略
     pricing = {
         "gemini-1.5-flash": {"input": 0.10, "output": 0.40},
-        "gemini-1.5-pro": {"input": 1.00, "output": 4.00} 
+        "gemini-1.5-pro": {"input": 1.00, "output": 4.00},
+        "gemini-2.0-flash": {"input": 0.10, "output": 0.40}
     }
     model_price = pricing.get(model_name, pricing["gemini-1.5-flash"])
 
@@ -197,9 +202,11 @@ else:
     # --- 配置解析 ---
     api_config = st.session_state.api_config
     lang_map = api_config.get("supported_languages", {"Simplified Chinese": "简体中文"})
+    provider = api_config.get("provider", "gemini")
     quality_modes = api_config.get("quality_modes", ["标准", "高质量", "快速"])
     default_lang = api_config.get("default_target_language", "Simplified Chinese")
     supported_models = api_config.get("supported_models", ["gemini-1.5-flash", "gemini-1.5-pro"])
+    default_model = api_config.get("default_model", supported_models[0] if supported_models else "")
     sb_features = api_config.get("sentence_break_features", {})
     lang_display_map = {v: k for k, v in lang_map.items()}
 
@@ -240,7 +247,7 @@ else:
         model_name = st.selectbox(
             "选择AI模型", 
             options=supported_models, 
-            index=0,
+            index=supported_models.index(default_model) if default_model in supported_models else 0,
             help="这是影响翻译质量和成本的最关键因素。\n- **Gemini 1.5 Flash**: 速度快，价格经济，性价比极高，适合绝大多数日常视频和常规内容的翻译。\n- **Gemini 1.5 Pro**: 功能更强大的旗舰模型，具备更强的逻辑推理和细微语境理解能力。适合翻译专业、复杂或包含大量术语的内容，当然成本也更高。"
         )
         
@@ -284,9 +291,12 @@ else:
         st.markdown("---")
         with st.container():
             all_files_content = list(st.session_state.file_cache.values())
-            estimated_cost_str = calculate_cost_estimate(all_files_content, model_name, enable_sentence_break)
+            estimated_cost_str = calculate_cost_estimate(all_files_content, model_name, enable_sentence_break, provider)
             st.info(f"💰 **预估费用:** {estimated_cost_str}", icon="💡")
-            st.caption("这是一个基于您上传文件的总字符数、所选模型和设置的粗略估算。实际费用可能因文本复杂度、对话密度和最终的Token用量而略有浮动。")
+            if provider == "gemini":
+                st.caption("这是一个基于您上传文件的总字符数、所选模型和设置的粗略估算。实际费用可能因文本复杂度、对话密度和最终的Token用量而略有浮动。")
+            else:
+                st.caption("当前为第三方 API 模式，价格策略取决于您的服务商；这里不再给出伪精确估算。")
 
     # ------------------- 翻译按钮和处理逻辑 -------------------
     if st.button("🚀 开始翻译所有文件", disabled=not uploaded_files, type="primary"):

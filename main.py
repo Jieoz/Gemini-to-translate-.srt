@@ -12,6 +12,8 @@ import asyncio
 import logging
 from datetime import datetime
 import uvicorn
+import httpx
+import json
 
 # 加载环境变量
 load_dotenv()
@@ -42,12 +44,40 @@ SPLIT_BATCH_TOKEN_LIMIT = 8000
 # --- 数据映射与API配置 ---
 SUPPORTED_LANGUAGES = {"Simplified Chinese":"简体中文", "English":"英文", "Japanese":"日文", "Korean":"韩文", "French":"法文", "German":"德文", "Spanish":"西班牙文", "Italian":"意大利文", "Russian":"俄文", "Arabic":"阿拉伯文"}
 QUALITY_MODES = {"快速":{"temperature":0.3,"max_tokens":4096},"标准":{"temperature":0.7,"max_tokens":6144},"高质量":{"temperature":0.9,"max_tokens":8192}}
-SUPPORTED_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+DEFAULT_GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+API_PROVIDER = os.getenv("API_PROVIDER", "gemini").strip().lower() or "gemini"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+OPENAI_COMPAT_BASE_URL = os.getenv("OPENAI_COMPAT_BASE_URL", "").strip().rstrip("/")
+OPENAI_COMPAT_API_KEY = os.getenv("OPENAI_COMPAT_API_KEY", "").strip()
+OPENAI_COMPAT_MODEL = os.getenv("OPENAI_COMPAT_MODEL", "gpt-4o-mini").strip()
+OPENAI_COMPAT_MODELS = [m.strip() for m in os.getenv("OPENAI_COMPAT_MODELS", OPENAI_COMPAT_MODEL).split(",") if m.strip()]
+SUPPORTED_MODELS = DEFAULT_GEMINI_MODELS if API_PROVIDER == "gemini" else OPENAI_COMPAT_MODELS
+
+
+def has_working_provider_config() -> bool:
+    if API_PROVIDER == "gemini":
+        return bool(GEMINI_API_KEY)
+    if API_PROVIDER == "openai_compat":
+        return bool(OPENAI_COMPAT_BASE_URL and OPENAI_COMPAT_API_KEY and OPENAI_COMPAT_MODEL)
+    return False
+
+
 try:
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    logger.info("Gemini API Key配置成功")
+    if API_PROVIDER == "gemini":
+        if GEMINI_API_KEY:
+            genai.configure(api_key=GEMINI_API_KEY)
+            logger.info("Gemini API Key配置成功")
+        else:
+            logger.warning("Gemini API Key未配置，Gemini 翻译接口将不可用")
+    elif API_PROVIDER == "openai_compat":
+        if has_working_provider_config():
+            logger.info("OpenAI兼容API配置成功")
+        else:
+            logger.warning("OpenAI兼容API未完整配置，翻译接口将不可用")
+    else:
+        logger.warning(f"未知API_PROVIDER: {API_PROVIDER}，翻译接口将不可用")
 except Exception as e:
-    logger.error(f"Gemini API Key配置失败: {e}")
+    logger.error(f"API提供商初始化失败: {e}")
 SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
     HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
@@ -126,20 +156,76 @@ def group_subtitles_by_sentence(subs):
     if cg: grps.append(cg)
     return grps
 
-async def api_call_with_retry(p,qm,mn):
-    if not os.getenv("GEMINI_API_KEY"): return "API_KEY_MISSING_ERROR"
-    cfg=QUALITY_MODES.get(qm,QUALITY_MODES["标准"]); ro={"timeout":API_TIMEOUT_SECONDS}
-    try: mdl=genai.GenerativeModel(mn)
-    except: return f"INVALID_MODEL_NAME_ERROR:{mn}"
+async def call_gemini_api(prompt: str, quality_mode: str, model_name: str) -> str:
+    if not GEMINI_API_KEY:
+        return "API_KEY_MISSING_ERROR"
+    cfg = QUALITY_MODES.get(quality_mode, QUALITY_MODES["标准"])
+    ro = {"timeout": API_TIMEOUT_SECONDS}
+    try:
+        mdl = genai.GenerativeModel(model_name)
+    except Exception:
+        return f"INVALID_MODEL_NAME_ERROR:{model_name}"
+    resp = await mdl.generate_content_async(
+        prompt,
+        safety_settings=SAFETY_SETTINGS,
+        generation_config=genai.types.GenerationConfig(
+            temperature=cfg["temperature"],
+            max_output_tokens=cfg["max_tokens"]
+        ),
+        request_options=ro,
+    )
+    return resp.text.strip() if getattr(resp, "text", None) else "EMPTY_RESPONSE"
+
+
+async def call_openai_compat_api(prompt: str, quality_mode: str, model_name: str) -> str:
+    if not has_working_provider_config():
+        return "API_KEY_MISSING_ERROR"
+    cfg = QUALITY_MODES.get(quality_mode, QUALITY_MODES["标准"])
+    url = f"{OPENAI_COMPAT_BASE_URL}/chat/completions"
+    payload = {
+        "model": model_name or OPENAI_COMPAT_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": cfg["temperature"],
+        "max_tokens": cfg["max_tokens"],
+        "stream": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENAI_COMPAT_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=API_TIMEOUT_SECONDS) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except Exception:
+        return f"API_CALL_FAILED:INVALID_OPENAI_COMPAT_RESPONSE:{json.dumps(data, ensure_ascii=False)[:300]}"
+    if isinstance(content, list):
+        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+        content = "".join(text_parts)
+    return content.strip() if isinstance(content, str) and content.strip() else "EMPTY_RESPONSE"
+
+
+async def api_call_with_retry(p, qm, mn):
+    if not has_working_provider_config():
+        return "API_KEY_MISSING_ERROR"
     for att in range(MAX_RETRIES):
         try:
-            resp=await mdl.generate_content_async(p,safety_settings=SAFETY_SETTINGS,generation_config=genai.types.GenerationConfig(temperature=cfg["temperature"],max_output_tokens=cfg["max_tokens"]),request_options=ro)
-            return resp.text.strip() if resp.text else "EMPTY_RESPONSE"
+            if API_PROVIDER == "gemini":
+                return await call_gemini_api(p, qm, mn)
+            if API_PROVIDER == "openai_compat":
+                return await call_openai_compat_api(p, qm, mn)
+            return f"UNSUPPORTED_PROVIDER_ERROR:{API_PROVIDER}"
         except Exception as e:
-            emsg=str(e); logger.error(f"API调用失败(att {att+1}/{MAX_RETRIES}): {emsg}")
-            if "DeadlineExceeded" in emsg or "Timeout" in emsg: return f"API_TIMEOUT_ERROR:{API_TIMEOUT_SECONDS}秒"
-            if att<MAX_RETRIES-1: await asyncio.sleep(RATE_LIMIT_DELAY*(2**att))
-            else: return f"API_CALL_FAILED:{emsg}"
+            emsg = str(e)
+            logger.error(f"API调用失败(att {att+1}/{MAX_RETRIES}, provider={API_PROVIDER}): {emsg}")
+            if "DeadlineExceeded" in emsg or "Timeout" in emsg or "timed out" in emsg.lower():
+                return f"API_TIMEOUT_ERROR:{API_TIMEOUT_SECONDS}秒"
+            if att < MAX_RETRIES - 1:
+                await asyncio.sleep(RATE_LIMIT_DELAY * (2 ** att))
+            else:
+                return f"API_CALL_FAILED:{emsg}"
     return "API_CALL_FAILED:重试次数已用尽。"
 def get_translation_prompt(tl,qm):
     ln=SUPPORTED_LANGUAGES.get(tl,"简体中文")
@@ -300,14 +386,33 @@ def build_final_text_chunk(sub, o_txt, t_txt, dm, fs, sll, mll):
 @app.get("/", response_model=BaseModel, summary="API状态检查")
 async def root():
     return {"status": "active", "message": "SRT Translation API (Dynamic Batch Split) is running.", "timestamp": datetime.now().isoformat(), "version": "6.4.1"}
+
+@app.get("/health", summary="健康检查")
+async def health():
+    return {
+        "status": "ok",
+        "provider": API_PROVIDER,
+        "api_key_configured": has_working_provider_config(),
+        "timestamp": datetime.now().isoformat(),
+        "version": "6.4.1"
+    }
+
 @app.get("/config", summary="获取API配置")
 async def get_config():
-    return { "supported_languages": SUPPORTED_LANGUAGES, "quality_modes": list(QUALITY_MODES.keys()), "default_target_language": "Simplified Chinese", "supported_models": SUPPORTED_MODELS, "sentence_break_features": {"enabled": True, "min_duration_seconds": 4.0, "max_chars_for_break": 50}}
+    return {
+        "provider": API_PROVIDER,
+        "supported_languages": SUPPORTED_LANGUAGES,
+        "quality_modes": list(QUALITY_MODES.keys()),
+        "default_target_language": "Simplified Chinese",
+        "supported_models": SUPPORTED_MODELS,
+        "default_model": SUPPORTED_MODELS[0] if SUPPORTED_MODELS else "",
+        "sentence_break_features": {"enabled": True, "min_duration_seconds": 4.0, "max_chars_for_break": 50}
+    }
 @app.post("/translate-stream", summary="流式翻译SRT文件")
 async def translate_stream_endpoint(
     file: UploadFile=File(...), display_mode:str=Query("only_translated"), target_language:str=Query("Simplified Chinese"),
     quality_mode:str=Query("标准"), font_size:Optional[int]=Query(None), split_long_lines:bool=Query(True),
-    max_line_length:int=Query(40), model_name:str=Query("gemini-1.5-flash"), enable_sentence_break:bool=Query(False),
+    max_line_length:int=Query(40), model_name:str=Query(OPENAI_COMPAT_MODEL if API_PROVIDER == "openai_compat" else "gemini-1.5-flash"), enable_sentence_break:bool=Query(False),
     min_duration_seconds:float=Query(6.0), max_chars_for_break:int=Query(60)
 ):
     try:
