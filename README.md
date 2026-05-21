@@ -70,16 +70,34 @@ cd Gemini-to-translate-.srt
 
 ### 3. 安装依赖
 
-在项目根目录下打开终端，优先使用 `requirements.txt` 安装：
+在项目根目录下打开终端，优先使用 `requirements.txt` 安装。
+
+如果你是在比较干净的 Debian / Ubuntu / 容器环境里重建，**先补系统组件**，否则很可能会遇到 `venv` / `pip` 缺失：
 
 ```bash
-pip install -r requirements.txt
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-venv
+```
+
+然后再创建虚拟环境并安装项目依赖：
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+如果你希望一把跑完，也可以直接执行仓库里的引导脚本：
+
+```bash
+bash bootstrap_env.sh
 ```
 
 如果你更喜欢手动安装，当前依赖等价于：
 
 ```bash
-pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai watchfiles python-multipart httpx
+python -m pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-generativeai watchfiles python-multipart httpx
 ```
 
 ### 4. 配置API密钥
