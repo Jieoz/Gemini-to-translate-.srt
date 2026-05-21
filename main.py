@@ -38,8 +38,10 @@ app.add_middleware(
 MAX_CHARS_PER_BATCH = 8000
 MAX_RETRIES = 3
 RATE_LIMIT_DELAY = 5
-API_TIMEOUT_SECONDS = 120 
-SPLIT_BATCH_TOKEN_LIMIT = 8000 
+API_TIMEOUT_SECONDS = 120
+SPLIT_BATCH_TOKEN_LIMIT = 8000
+MAX_TRANSLATION_BATCH_CONCURRENCY = max(1, int(os.getenv("MAX_TRANSLATION_BATCH_CONCURRENCY", "3")))
+MAX_SPLIT_BATCH_CONCURRENCY = max(1, int(os.getenv("MAX_SPLIT_BATCH_CONCURRENCY", "2")))
 
 # --- 数据映射与API配置 ---
 SUPPORTED_LANGUAGES = {"Simplified Chinese":"简体中文", "English":"英文", "Japanese":"日文", "Korean":"韩文", "French":"法文", "German":"德文", "Spanish":"西班牙文", "Italian":"意大利文", "Russian":"俄文", "Arabic":"阿拉伯文"}
@@ -52,6 +54,37 @@ OPENAI_COMPAT_API_KEY = os.getenv("OPENAI_COMPAT_API_KEY", "").strip()
 OPENAI_COMPAT_MODEL = os.getenv("OPENAI_COMPAT_MODEL", "gpt-4o-mini").strip()
 OPENAI_COMPAT_MODELS = [m.strip() for m in os.getenv("OPENAI_COMPAT_MODELS", OPENAI_COMPAT_MODEL).split(",") if m.strip()]
 SUPPORTED_MODELS = DEFAULT_GEMINI_MODELS if API_PROVIDER == "gemini" else OPENAI_COMPAT_MODELS
+
+
+def normalize_api_error_message(exc: Exception) -> str:
+    message = str(exc)
+    lower = message.lower()
+    if "deadlineexceeded" in message or "timeout" in lower or "timed out" in lower:
+        return f"API_TIMEOUT_ERROR:{API_TIMEOUT_SECONDS}秒"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code == 401:
+            return "API_AUTH_ERROR:第三方API认证失败，请检查密钥"
+        if status_code == 403:
+            return "API_PERMISSION_ERROR:第三方API无权访问该模型或接口"
+        if status_code == 404:
+            return "API_NOT_FOUND_ERROR:第三方API地址或模型不存在"
+        if status_code == 429:
+            return "API_RATE_LIMIT_ERROR:请求过多，请稍后重试"
+        if 500 <= status_code < 600:
+            return f"API_SERVER_ERROR:第三方API服务异常({status_code})"
+        return f"API_HTTP_ERROR:{status_code}"
+    return f"API_CALL_FAILED:{message}"
+
+
+async def gather_with_concurrency(limit: int, coroutines):
+    semaphore = asyncio.Semaphore(max(1, limit))
+
+    async def run_one(coro):
+        async with semaphore:
+            return await coro
+
+    return await asyncio.gather(*(run_one(coro) for coro in coroutines))
 
 
 def has_working_provider_config() -> bool:
@@ -218,14 +251,14 @@ async def api_call_with_retry(p, qm, mn):
                 return await call_openai_compat_api(p, qm, mn)
             return f"UNSUPPORTED_PROVIDER_ERROR:{API_PROVIDER}"
         except Exception as e:
-            emsg = str(e)
-            logger.error(f"API调用失败(att {att+1}/{MAX_RETRIES}, provider={API_PROVIDER}): {emsg}")
-            if "DeadlineExceeded" in emsg or "Timeout" in emsg or "timed out" in emsg.lower():
-                return f"API_TIMEOUT_ERROR:{API_TIMEOUT_SECONDS}秒"
+            normalized = normalize_api_error_message(e)
+            logger.error(f"API调用失败(att {att+1}/{MAX_RETRIES}, provider={API_PROVIDER}): {normalized}")
+            if normalized.startswith("API_AUTH_ERROR") or normalized.startswith("API_PERMISSION_ERROR") or normalized.startswith("API_NOT_FOUND_ERROR"):
+                return normalized
             if att < MAX_RETRIES - 1:
                 await asyncio.sleep(RATE_LIMIT_DELAY * (2 ** att))
             else:
-                return f"API_CALL_FAILED:{emsg}"
+                return normalized
     return "API_CALL_FAILED:重试次数已用尽。"
 def get_translation_prompt(tl,qm):
     ln=SUPPORTED_LANGUAGES.get(tl,"简体中文")
@@ -321,7 +354,7 @@ async def translate_srt_stream(
             current_batch.append(group); current_chars += group_chars
         if current_batch: all_translation_batches.append(current_batch)
         tasks = [translate_batch_of_groups_and_parse(batch, target_language, quality_mode, model_name) for batch in all_translation_batches]
-        results_list = await asyncio.gather(*tasks)
+        results_list = await gather_with_concurrency(MAX_TRANSLATION_BATCH_CONCURRENCY, tasks)
         final_translation_map = {k: v for d in results_list for k, v in d.items()}
         yield "[STATUS] 翻译完成，正在处理断句任务..."
 
@@ -341,7 +374,7 @@ async def translate_srt_stream(
                 if current_split_batch: split_batches.append(current_split_batch)
                 yield f"[STATUS] 动态打包完成，共 {len(split_batches)} 个断句批次。正在并行处理..."
                 split_tasks = [process_split_batch(batch, final_translation_map, quality_mode, model_name) for batch in split_batches]
-                split_results_list = await asyncio.gather(*split_tasks)
+                split_results_list = await gather_with_concurrency(MAX_SPLIT_BATCH_CONCURRENCY, split_tasks)
                 for res_map in split_results_list: split_results_map.update(res_map)
                 yield "[STATUS] 所有断句任务处理完成，正在生成最终字幕..."
 
@@ -406,7 +439,11 @@ async def get_config():
         "default_target_language": "Simplified Chinese",
         "supported_models": SUPPORTED_MODELS,
         "default_model": SUPPORTED_MODELS[0] if SUPPORTED_MODELS else "",
-        "sentence_break_features": {"enabled": True, "min_duration_seconds": 4.0, "max_chars_for_break": 50}
+        "sentence_break_features": {"enabled": True, "min_duration_seconds": 4.0, "max_chars_for_break": 50},
+        "runtime_limits": {
+            "max_translation_batch_concurrency": MAX_TRANSLATION_BATCH_CONCURRENCY,
+            "max_split_batch_concurrency": MAX_SPLIT_BATCH_CONCURRENCY,
+        }
     }
 @app.post("/translate-stream", summary="流式翻译SRT文件")
 async def translate_stream_endpoint(

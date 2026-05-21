@@ -51,6 +51,7 @@
 4. **优化分行策略**：当前仍偏按长度硬切，后面可改成优先按标点或空格断行，观感会明显更好。
 5. **补 Docker 化部署**：让别人不用手配 Python 环境就能跑起来。
 6. **增强第三方 API 兼容层**：逐步兼容更多 OpenAI 风格返回格式、错误格式和速率限制头。
+7. **优化分行与断句策略**：在不破坏时间轴的前提下，优先按自然停顿而不是死按长度切分。
 
 ### 1. 先决条件
 
@@ -104,10 +105,13 @@ pip install fastapi "uvicorn[standard]" streamlit requests python-dotenv google-
     OPENAI_COMPAT_API_KEY=your_api_key_here
     OPENAI_COMPAT_MODEL=gpt-4o-mini
     OPENAI_COMPAT_MODELS=gpt-4o-mini,claude-3.5-sonnet
+    MAX_TRANSLATION_BATCH_CONCURRENCY=3
+    MAX_SPLIT_BATCH_CONCURRENCY=2
     ```
 
 > `.env` 已默认视为本地私密文件，不应提交到仓库。
 > `OPENAI_COMPAT_MODELS` 是可选项，用于控制前端可选模型列表。
+> `MAX_TRANSLATION_BATCH_CONCURRENCY` / `MAX_SPLIT_BATCH_CONCURRENCY` 可用于在第三方 API 更容易限流时主动收紧并发。
 
 ### 5. 启动服务 (运行程序)
 
@@ -140,7 +144,7 @@ streamlit run webui.py
 
 您可以直接在 `main.py` 文件中修改一些核心参数的默认值：
 
-* **API相关**: `MAX_CHARS_PER_BATCH`, `MAX_RETRIES`, `RATE_LIMIT_DELAY`, `API_TIMEOUT_SECONDS`, `API_PROVIDER` 等。
+* **API相关**: `MAX_CHARS_PER_BATCH`, `MAX_RETRIES`, `RATE_LIMIT_DELAY`, `API_TIMEOUT_SECONDS`, `API_PROVIDER`, `MAX_TRANSLATION_BATCH_CONCURRENCY`, `MAX_SPLIT_BATCH_CONCURRENCY` 等。
 * **功能默认值**: 在 `@app.get("/config")` 路由下，您可以修改所有提供给前端的默认配置，例如：
     * 默认的目标语言 (`default_target_language`)
     * 智能断句的默认参数 (`sentence_break_features`)
